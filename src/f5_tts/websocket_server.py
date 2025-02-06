@@ -10,11 +10,18 @@ import json
 import base64
 import uuid
 import os
+import sys
+import time
+
+STYLE_TTS2_PATH = "../../src"
+sys.path.append(STYLE_TTS2_PATH)
+
 from importlib.resources import files
 from cached_path import cached_path
 
 from infer.utils_infer import infer_batch_process, preprocess_ref_audio_text, load_vocoder, load_model
 from model.backbones.dit import DiT
+
 
 
 class TTSModel:
@@ -28,7 +35,6 @@ class TTSModel:
         self.device = device or (
             "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
         )
-        
         print(f"Initializing model on device: {self.device}")
         
         # 加载模型
@@ -66,8 +72,10 @@ class TTSModel:
             ref_audio, ref_text = preprocess_ref_audio_text(default_ref_audio, "")
             audio, sr = torchaudio.load(ref_audio)
             gen_text = "Warm-up text for the model."
-            
-            infer_batch_process((audio, sr), ref_text, [gen_text], self.model, self.vocoder, device=self.device)
+            start = time.time()
+            final_audio, final_sample_rate, _ = infer_batch_process((audio, sr), ref_text, [gen_text], self.model, self.vocoder, device=self.device)
+            rtf = (time.time() - start) / (len(final_audio) / final_sample_rate)
+            print(f"RTF = {rtf:.5f}")
             print("Model warm-up completed successfully.")
         except Exception as e:
             print(f"Error during warm-up: {e}")
@@ -79,9 +87,7 @@ class TTSProcessor:
     """处理单个用户的 TTS 请求"""
     def __init__(self, ref_audio, ref_text):
         self.ref_audio = ref_audio
-        self.ref_text = ref_text
-        self.sampling_rate = 24000  # 采样率
-        
+        self.ref_text = ref_text        
         # 获取共享的模型实例
         self.tts_model = TTSModel.get_instance()
 
@@ -91,7 +97,7 @@ class TTSProcessor:
             # 处理参考音频和文本
             ref_audio, ref_text = preprocess_ref_audio_text(self.ref_audio, self.ref_text)
             audio, sr = torchaudio.load(ref_audio)
-
+            start = time.time()
             # 使用共享模型进行推理
             audio_chunk, final_sample_rate, _ = infer_batch_process(
                 (audio, sr),
@@ -101,7 +107,9 @@ class TTSProcessor:
                 self.tts_model.vocoder,
                 device=self.tts_model.device,
             )
-
+            print(f"sample rate: {final_sample_rate}")
+            rtf = (time.time() - start) / (len(audio_chunk) / 24000)
+            print(f"RTF = {rtf:.5f}")
             # 分块发送音频
             chunk_size = int(final_sample_rate * play_steps_in_s)
 
